@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+VERSION="${1:?terraform version required}"
+ARCH="$(dpkg --print-architecture)"
+
+case "${ARCH}" in
+  amd64) TF_ARCH="amd64" ;;
+  arm64) TF_ARCH="arm64" ;;
+  *) echo "Unsupported architecture: ${ARCH}" >&2; exit 1 ;;
+esac
+
+cd /tmp
+curl -fsSLO "https://releases.hashicorp.com/terraform/${VERSION}/terraform_${VERSION}_linux_${TF_ARCH}.zip"
+unzip -o -q terraform_${VERSION}_linux_${TF_ARCH}.zip
+install -m 0755 terraform /usr/local/bin/terraform
+rm -f terraform "terraform_${VERSION}_linux_${TF_ARCH}.zip"
