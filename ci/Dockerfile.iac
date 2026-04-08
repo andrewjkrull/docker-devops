@@ -1,0 +1,105 @@
+# syntax=docker/dockerfile:1.7
+# ---------------------------------------------------------------------------
+# ci/Dockerfile.iac — devops-toolkit:ci-iac
+#
+# Purpose-built CI runner for infrastructure provisioning pipeline steps.
+# Tools: terraform, opentofu, vault, sops, age, yq, docker CLI
+#
+# What it does NOT include (and why):
+#   - ansible    — config management runs after infra is up; separate stage
+#   - kubectl    — k8s ops are a separate post-provisioning stage
+#   - trivy/grype — security scanning, separate stage
+#   - packer     — image building is a distinct pipeline concern
+#   - k3d        — cluster management, not IaC pipeline deps
+#   - vim/ping   — interactive diagnostics, not CI deps
+# ---------------------------------------------------------------------------
+
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+ARG RUNTIME_IMAGE=debian:bookworm-slim
+
+############################
+# stage: tools-builder
+############################
+FROM ${PYTHON_IMAGE} AS tools-builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+ARG TERRAFORM_VERSION
+ARG OPENTOFU_VERSION
+ARG VAULT_VERSION
+ARG SOPS_VERSION
+ARG AGE_VERSION
+ARG YQ_VERSION
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    lsb-release \
+    unzip \
+    file \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/build
+COPY scripts/ /tmp/build/scripts/
+RUN chmod +x /tmp/build/scripts/*.sh
+
+RUN /tmp/build/scripts/install-terraform.sh "${TERRAFORM_VERSION}"
+RUN /tmp/build/scripts/install-opentofu.sh "${OPENTOFU_VERSION}"
+RUN /tmp/build/scripts/install-vault.sh "${VAULT_VERSION}"
+RUN /tmp/build/scripts/install-sops.sh "${SOPS_VERSION}"
+RUN /tmp/build/scripts/install-age.sh "${AGE_VERSION}"
+RUN /tmp/build/scripts/install-yq.sh "${YQ_VERSION}"
+
+############################
+# stage: runtime
+############################
+FROM ${RUNTIME_IMAGE} AS runtime
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    unzip \
+    openssl \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=tools-builder /usr/bin/terraform    /usr/bin/terraform
+COPY --from=tools-builder /usr/local/bin/tofu   /usr/local/bin/tofu
+COPY --from=tools-builder /usr/bin/vault        /usr/bin/vault
+COPY --from=tools-builder /usr/local/bin/sops   /usr/local/bin/sops
+COPY --from=tools-builder /usr/local/bin/age    /usr/local/bin/age
+COPY --from=tools-builder /usr/local/bin/age-keygen /usr/local/bin/age-keygen
+COPY --from=tools-builder /usr/local/bin/yq     /usr/local/bin/yq
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/bin/bash"]
+
+############################
+# stage: smoke-test
+############################
+FROM runtime AS smoke-test
+
+RUN bash -lc '\
+  terraform version && \
+  tofu version && \
+  vault version && \
+  sops --version && \
+  age --version && \
+  yq --version && \
+  echo "--- ci-iac smoke OK ---" \
+'

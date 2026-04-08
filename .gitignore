@@ -1,0 +1,64 @@
+# ---------------------------------------------------------------------------
+# Editor and IDE
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---------------------------------------------------------------------------
+# Credentials and secrets — never commit these
+# ---------------------------------------------------------------------------
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+.vault-token
+vault-token
+.env
+.env.*
+secrets/
+secrets.yaml
+secrets.yml
+
+# ---------------------------------------------------------------------------
+# Ansible working files
+# These can appear if someone runs ansible commands from the repo root
+# ---------------------------------------------------------------------------
+*.retry
+.ansible/
+ansible.log
+
+# ---------------------------------------------------------------------------
+# Terraform / OpenTofu state and working dirs
+# If someone runs tofu/terraform from this repo root
+# ---------------------------------------------------------------------------
+**/.terraform/
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+
+# ---------------------------------------------------------------------------
+# Docker build artifacts
+# ---------------------------------------------------------------------------
+.docker/
+
+# ---------------------------------------------------------------------------
+# Test / scratch output
+# ---------------------------------------------------------------------------
+/tmp/
+scratch/
+*.log

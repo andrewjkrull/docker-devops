@@ -1,0 +1,418 @@
+# ---------------------------------------------------------------------------
+# .gitea/workflows/build-push.yaml
+#
+# Builds and pushes all devops-toolkit images to the Gitea container registry.
+#
+# REGISTRY variable:
+#   Default: gitea.local  — change this at the repository or org level via
+#   Settings → Actions → Variables → REGISTRY
+#   Or override per-run via workflow_dispatch input.
+#
+# Image naming:
+#   <registry>/<owner>/<repo>:<tag>
+#   e.g.  gitea.local/devops/devops-toolkit:full
+#         gitea.local/devops/devops-toolkit:ci-k8s
+#         gitea.local/devops/devops-toolkit:ci-security
+#         gitea.local/devops/devops-toolkit:ci-iac
+#
+# Triggers:
+#   push → main       build + push  (tags: :full, :ci-k8s, etc. + :<sha-short>)
+#   push → v*.*.*     build + push  (tags: above + :<semver>)
+#   pull_request       build + smoke test only — no push
+#   workflow_dispatch  manual run with registry override
+#
+# Secrets required (Settings → Actions → Secrets):
+#   REGISTRY_USER      Gitea username with write access to the package registry
+#   REGISTRY_PASSWORD  Gitea password or personal access token (package:write scope)
+#
+# If this repo lives on the same Gitea instance as the registry you can use
+# the built-in token instead — see the "Using GITEA_TOKEN" note in the comments.
+# ---------------------------------------------------------------------------
+
+name: build-and-push
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      registry:
+        description: "Container registry hostname (overrides REGISTRY variable)"
+        required: false
+        default: ""
+
+# Cancel in-progress runs for the same ref so a fast follow-up push
+# doesn't queue behind a slow build.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ---------------------------------------------------------------------------
+# Variables
+# ---------------------------------------------------------------------------
+# REGISTRY is resolved in this order (first non-empty wins):
+#   1. workflow_dispatch input (manual override)
+#   2. Repository/org variable named REGISTRY  (Settings → Actions → Variables)
+#   3. Hardcoded fallback: gitea.local
+#
+# IMAGE_OWNER is the Gitea user or org that owns this repo.
+# IMAGE_REPO  is the repository name (used as the image name).
+# Both are derived from github.repository ("owner/repo") automatically.
+env:
+  FALLBACK_REGISTRY: gitea.local
+  IMAGE_OWNER: ${{ github.repository_owner }}
+  IMAGE_REPO: ${{ github.event.repository.name }}
+
+jobs:
+  # -------------------------------------------------------------------------
+  # Job: resolve-vars
+  # Computes shared values (registry, image base, tags) once and passes
+  # them to downstream jobs via outputs so there is a single source of truth.
+  # -------------------------------------------------------------------------
+  resolve-vars:
+    name: Resolve build variables
+    runs-on: self-hosted
+    outputs:
+      registry:    ${{ steps.vars.outputs.registry }}
+      image_base:  ${{ steps.vars.outputs.image_base }}
+      push:        ${{ steps.vars.outputs.push }}
+      sha_short:   ${{ steps.vars.outputs.sha_short }}
+      semver_tag:  ${{ steps.vars.outputs.semver_tag }}
+
+    steps:
+      - name: Compute variables
+        id: vars
+        run: |
+          # Registry — dispatch input wins, then repo variable, then fallback
+          REGISTRY="${{ github.event.inputs.registry }}"
+          if [ -z "${REGISTRY}" ]; then
+            REGISTRY="${{ vars.REGISTRY }}"
+          fi
+          if [ -z "${REGISTRY}" ]; then
+            REGISTRY="${{ env.FALLBACK_REGISTRY }}"
+          fi
+
+          IMAGE_BASE="${REGISTRY}/${{ env.IMAGE_OWNER }}/${{ env.IMAGE_REPO }}"
+          SHA_SHORT="${GITHUB_SHA::8}"
+
+          # Only push on main branch pushes or version tags — not on PRs
+          PUSH="false"
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            PUSH="true"
+          fi
+
+          # Semver tag — set only when the triggering ref is a version tag
+          SEMVER_TAG=""
+          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
+            SEMVER_TAG="${GITHUB_REF_NAME}"
+          fi
+
+          echo "registry=${REGISTRY}"      >> "$GITHUB_OUTPUT"
+          echo "image_base=${IMAGE_BASE}"  >> "$GITHUB_OUTPUT"
+          echo "push=${PUSH}"              >> "$GITHUB_OUTPUT"
+          echo "sha_short=${SHA_SHORT}"    >> "$GITHUB_OUTPUT"
+          echo "semver_tag=${SEMVER_TAG}"  >> "$GITHUB_OUTPUT"
+
+          echo "--- Resolved build variables ---"
+          echo "  registry:   ${REGISTRY}"
+          echo "  image_base: ${IMAGE_BASE}"
+          echo "  push:       ${PUSH}"
+          echo "  sha_short:  ${SHA_SHORT}"
+          echo "  semver_tag: ${SEMVER_TAG:-<none>}"
+
+  # -------------------------------------------------------------------------
+  # Job: build-full
+  # Builds the :full local interactive image and pushes it.
+  # -------------------------------------------------------------------------
+  build-full:
+    name: Build devops-toolkit:full
+    runs-on: self-hosted
+    needs: resolve-vars
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load versions
+        id: versions
+        run: |
+          # Export every line from versions.env as a GitHub output
+          while IFS= read -r line; do
+            # Skip blank lines and comments
+            [[ -z "${line}" || "${line}" =~ ^# ]] && continue
+            # Strip inline comments
+            clean="${line%%#*}"
+            clean="${clean%"${clean##*[![:space:]]}"}"
+            echo "${clean}" >> "$GITHUB_OUTPUT"
+          done < versions.env
+
+      - name: Log in to registry
+        if: needs.resolve-vars.outputs.push == 'true'
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" \
+            | docker login "${{ needs.resolve-vars.outputs.registry }}" \
+                --username "${{ secrets.REGISTRY_USER }}" \
+                --password-stdin
+
+      - name: Build full image
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          SHA="${{ needs.resolve-vars.outputs.sha_short }}"
+
+          docker build \
+            --build-arg ANSIBLE_CORE_VERSION=${{ steps.versions.outputs.ANSIBLE_CORE_VERSION }} \
+            --build-arg ANSIBLE_LINT_VERSION=${{ steps.versions.outputs.ANSIBLE_LINT_VERSION }} \
+            --build-arg TERRAFORM_VERSION=${{ steps.versions.outputs.TERRAFORM_VERSION }} \
+            --build-arg OPENTOFU_VERSION=${{ steps.versions.outputs.OPENTOFU_VERSION }} \
+            --build-arg PACKER_VERSION=${{ steps.versions.outputs.PACKER_VERSION }} \
+            --build-arg VAULT_VERSION=${{ steps.versions.outputs.VAULT_VERSION }} \
+            --build-arg KUBECTL_VERSION=${{ steps.versions.outputs.KUBECTL_VERSION }} \
+            --build-arg HELM_VERSION=${{ steps.versions.outputs.HELM_VERSION }} \
+            --build-arg KUSTOMIZE_VERSION=${{ steps.versions.outputs.KUSTOMIZE_VERSION }} \
+            --build-arg TRIVY_VERSION=${{ steps.versions.outputs.TRIVY_VERSION }} \
+            --build-arg GRYPE_VERSION=${{ steps.versions.outputs.GRYPE_VERSION }} \
+            --build-arg YQ_VERSION=${{ steps.versions.outputs.YQ_VERSION }} \
+            --build-arg SOPS_VERSION=${{ steps.versions.outputs.SOPS_VERSION }} \
+            --build-arg AGE_VERSION=${{ steps.versions.outputs.AGE_VERSION }} \
+            --build-arg GITLEAKS_VERSION=${{ steps.versions.outputs.GITLEAKS_VERSION }} \
+            --build-arg SYFT_VERSION=${{ steps.versions.outputs.SYFT_VERSION }} \
+            --build-arg K3D_VERSION=${{ steps.versions.outputs.K3D_VERSION }} \
+            --build-arg DOCKER_VERSION=${{ steps.versions.outputs.DOCKER_VERSION }} \
+            -f Dockerfile \
+            --target smoke-test \
+            -t "${BASE}:full" \
+            -t "${BASE}:latest" \
+            -t "${BASE}:full-${SHA}" \
+            .
+
+      - name: Tag semver (tagged releases only)
+        if: needs.resolve-vars.outputs.semver_tag != ''
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          TAG="${{ needs.resolve-vars.outputs.semver_tag }}"
+          docker tag "${BASE}:full" "${BASE}:full-${TAG}"
+          docker tag "${BASE}:full" "${BASE}:${TAG}"
+
+      - name: Push full image
+        if: needs.resolve-vars.outputs.push == 'true'
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          SHA="${{ needs.resolve-vars.outputs.sha_short }}"
+          docker push "${BASE}:full"
+          docker push "${BASE}:latest"
+          docker push "${BASE}:full-${SHA}"
+
+      - name: Push semver tags (tagged releases only)
+        if: |
+          needs.resolve-vars.outputs.push == 'true' &&
+          needs.resolve-vars.outputs.semver_tag != ''
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          TAG="${{ needs.resolve-vars.outputs.semver_tag }}"
+          docker push "${BASE}:full-${TAG}"
+          docker push "${BASE}:${TAG}"
+
+      - name: Clean up local images
+        if: always()
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          docker rmi "${BASE}:full" "${BASE}:latest" 2>/dev/null || true
+
+  # -------------------------------------------------------------------------
+  # Job: build-ci-images
+  # Matrix build for the three CI runner images.
+  # Each matrix entry defines exactly which Dockerfile and build args to use.
+  # -------------------------------------------------------------------------
+  build-ci-images:
+    name: Build ${{ matrix.image }} CI image
+    runs-on: self-hosted
+    needs: resolve-vars
+
+    strategy:
+      fail-fast: false   # build all three even if one fails
+      matrix:
+        include:
+          - image: ci-k8s
+            dockerfile: ci/Dockerfile.k8s
+            build_args: |
+              KUBECTL_VERSION
+              HELM_VERSION
+              KUSTOMIZE_VERSION
+              YQ_VERSION
+              SOPS_VERSION
+              AGE_VERSION
+
+          - image: ci-security
+            dockerfile: ci/Dockerfile.security
+            build_args: |
+              TRIVY_VERSION
+              GRYPE_VERSION
+              SYFT_VERSION
+              GITLEAKS_VERSION
+
+          - image: ci-iac
+            dockerfile: ci/Dockerfile.iac
+            build_args: |
+              TERRAFORM_VERSION
+              OPENTOFU_VERSION
+              VAULT_VERSION
+              SOPS_VERSION
+              AGE_VERSION
+              YQ_VERSION
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Load versions
+        id: versions
+        run: |
+          while IFS= read -r line; do
+            [[ -z "${line}" || "${line}" =~ ^# ]] && continue
+            clean="${line%%#*}"
+            clean="${clean%"${clean##*[![:space:]]}"}"
+            echo "${clean}" >> "$GITHUB_OUTPUT"
+          done < versions.env
+
+      - name: Log in to registry
+        if: needs.resolve-vars.outputs.push == 'true'
+        run: |
+          echo "${{ secrets.REGISTRY_PASSWORD }}" \
+            | docker login "${{ needs.resolve-vars.outputs.registry }}" \
+                --username "${{ secrets.REGISTRY_USER }}" \
+                --password-stdin
+
+      - name: Build ${{ matrix.image }}
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          SHA="${{ needs.resolve-vars.outputs.sha_short }}"
+          IMAGE="${{ matrix.image }}"
+
+          # Build the --build-arg flags dynamically from the matrix build_args list
+          BUILD_ARG_FLAGS=""
+          while IFS= read -r varname; do
+            [[ -z "${varname}" ]] && continue
+            varname="${varname// /}"
+            # Look up the value from the versions step outputs
+            value=""
+            case "${varname}" in
+              ANSIBLE_CORE_VERSION) value="${{ steps.versions.outputs.ANSIBLE_CORE_VERSION }}" ;;
+              ANSIBLE_LINT_VERSION) value="${{ steps.versions.outputs.ANSIBLE_LINT_VERSION }}" ;;
+              TERRAFORM_VERSION)    value="${{ steps.versions.outputs.TERRAFORM_VERSION }}" ;;
+              OPENTOFU_VERSION)     value="${{ steps.versions.outputs.OPENTOFU_VERSION }}" ;;
+              PACKER_VERSION)       value="${{ steps.versions.outputs.PACKER_VERSION }}" ;;
+              VAULT_VERSION)        value="${{ steps.versions.outputs.VAULT_VERSION }}" ;;
+              KUBECTL_VERSION)      value="${{ steps.versions.outputs.KUBECTL_VERSION }}" ;;
+              HELM_VERSION)         value="${{ steps.versions.outputs.HELM_VERSION }}" ;;
+              KUSTOMIZE_VERSION)    value="${{ steps.versions.outputs.KUSTOMIZE_VERSION }}" ;;
+              TRIVY_VERSION)        value="${{ steps.versions.outputs.TRIVY_VERSION }}" ;;
+              GRYPE_VERSION)        value="${{ steps.versions.outputs.GRYPE_VERSION }}" ;;
+              SYFT_VERSION)         value="${{ steps.versions.outputs.SYFT_VERSION }}" ;;
+              GITLEAKS_VERSION)     value="${{ steps.versions.outputs.GITLEAKS_VERSION }}" ;;
+              YQ_VERSION)           value="${{ steps.versions.outputs.YQ_VERSION }}" ;;
+              SOPS_VERSION)         value="${{ steps.versions.outputs.SOPS_VERSION }}" ;;
+              AGE_VERSION)          value="${{ steps.versions.outputs.AGE_VERSION }}" ;;
+              DOCKER_VERSION)       value="${{ steps.versions.outputs.DOCKER_VERSION }}" ;;
+              K3D_VERSION)          value="${{ steps.versions.outputs.K3D_VERSION }}" ;;
+            esac
+            if [[ -n "${value}" ]]; then
+              BUILD_ARG_FLAGS="${BUILD_ARG_FLAGS} --build-arg ${varname}=${value}"
+            fi
+          done <<< "${{ matrix.build_args }}"
+
+          docker build \
+            ${BUILD_ARG_FLAGS} \
+            -f "${{ matrix.dockerfile }}" \
+            --target smoke-test \
+            -t "${BASE}:${IMAGE}" \
+            -t "${BASE}:${IMAGE}-${SHA}" \
+            .
+
+      - name: Tag semver (tagged releases only)
+        if: needs.resolve-vars.outputs.semver_tag != ''
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          IMAGE="${{ matrix.image }}"
+          TAG="${{ needs.resolve-vars.outputs.semver_tag }}"
+          docker tag "${BASE}:${IMAGE}" "${BASE}:${IMAGE}-${TAG}"
+
+      - name: Push ${{ matrix.image }}
+        if: needs.resolve-vars.outputs.push == 'true'
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          IMAGE="${{ matrix.image }}"
+          SHA="${{ needs.resolve-vars.outputs.sha_short }}"
+          docker push "${BASE}:${IMAGE}"
+          docker push "${BASE}:${IMAGE}-${SHA}"
+
+      - name: Push semver tags (tagged releases only)
+        if: |
+          needs.resolve-vars.outputs.push == 'true' &&
+          needs.resolve-vars.outputs.semver_tag != ''
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          IMAGE="${{ matrix.image }}"
+          TAG="${{ needs.resolve-vars.outputs.semver_tag }}"
+          docker push "${BASE}:${IMAGE}-${TAG}"
+
+      - name: Clean up local images
+        if: always()
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          IMAGE="${{ matrix.image }}"
+          docker rmi "${BASE}:${IMAGE}" 2>/dev/null || true
+
+  # -------------------------------------------------------------------------
+  # Job: summary
+  # Prints a digest of what was built and where it was pushed.
+  # -------------------------------------------------------------------------
+  summary:
+    name: Build summary
+    runs-on: self-hosted
+    needs: [resolve-vars, build-full, build-ci-images]
+    if: always()
+
+    steps:
+      - name: Print summary
+        run: |
+          BASE="${{ needs.resolve-vars.outputs.image_base }}"
+          SHA="${{ needs.resolve-vars.outputs.sha_short }}"
+          PUSH="${{ needs.resolve-vars.outputs.push }}"
+          SEMVER="${{ needs.resolve-vars.outputs.semver_tag }}"
+
+          echo "=========================================="
+          echo "  devops-toolkit build summary"
+          echo "=========================================="
+          echo "  Registry:  ${{ needs.resolve-vars.outputs.registry }}"
+          echo "  Image base: ${BASE}"
+          echo "  SHA short:  ${SHA}"
+          echo "  Pushed:     ${PUSH}"
+          if [ -n "${SEMVER}" ]; then
+            echo "  Semver tag: ${SEMVER}"
+          fi
+          echo ""
+          echo "  Tags produced:"
+          echo "    ${BASE}:full"
+          echo "    ${BASE}:latest"
+          echo "    ${BASE}:full-${SHA}"
+          echo "    ${BASE}:ci-k8s"
+          echo "    ${BASE}:ci-k8s-${SHA}"
+          echo "    ${BASE}:ci-security"
+          echo "    ${BASE}:ci-security-${SHA}"
+          echo "    ${BASE}:ci-iac"
+          echo "    ${BASE}:ci-iac-${SHA}"
+          if [ -n "${SEMVER}" ]; then
+            echo "    ${BASE}:${SEMVER}"
+            echo "    ${BASE}:full-${SEMVER}"
+            echo "    ${BASE}:ci-k8s-${SEMVER}"
+            echo "    ${BASE}:ci-security-${SEMVER}"
+            echo "    ${BASE}:ci-iac-${SEMVER}"
+          fi
+          echo "=========================================="
+          echo "  full job:       ${{ needs.build-full.result }}"
+          echo "  ci-images job:  ${{ needs.build-ci-images.result }}"
+          echo "=========================================="

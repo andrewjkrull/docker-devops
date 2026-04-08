@@ -1,0 +1,130 @@
+# syntax=docker/dockerfile:1.7
+# ---------------------------------------------------------------------------
+# ci/Dockerfile.k8s — devops-toolkit:ci-k8s
+#
+# Purpose-built CI runner for Kubernetes / GitOps pipeline steps.
+# Tools: kubectl, helm, kustomize, yq, sops, age, docker CLI
+#
+# What it does NOT include (and why):
+#   - ansible        — configuration management, not GitOps deploy
+#   - terraform/tofu — IaC provisioning, separate pipeline stage
+#   - trivy/grype    — security scanning, separate pipeline stage
+#   - packer/k3d     — image building / cluster creation, not deploy steps
+#   - vim/ping       — interactive diagnostics, not CI deps
+# ---------------------------------------------------------------------------
+
+ARG RUNTIME_IMAGE=debian:bookworm-slim
+
+############################
+# stage: docker-cli-source
+############################
+FROM ${RUNTIME_IMAGE} AS docker-cli-source
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && . /etc/os-release \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+      > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      docker-ce-cli \
+      docker-buildx-plugin \
+      docker-compose-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
+############################
+# stage: tools-builder
+############################
+FROM ${RUNTIME_IMAGE} AS tools-builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+ARG KUBECTL_VERSION
+ARG HELM_VERSION
+ARG KUSTOMIZE_VERSION
+ARG YQ_VERSION
+ARG SOPS_VERSION
+ARG AGE_VERSION
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    tar \
+    unzip \
+    file \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/build
+COPY scripts/ /tmp/build/scripts/
+RUN chmod +x /tmp/build/scripts/*.sh
+
+RUN /tmp/build/scripts/install-kubectl.sh "${KUBECTL_VERSION}"
+RUN /tmp/build/scripts/install-helm.sh "${HELM_VERSION}"
+RUN /tmp/build/scripts/install-kustomize.sh "${KUSTOMIZE_VERSION}"
+RUN /tmp/build/scripts/install-yq.sh "${YQ_VERSION}"
+RUN /tmp/build/scripts/install-sops.sh "${SOPS_VERSION}"
+RUN /tmp/build/scripts/install-age.sh "${AGE_VERSION}"
+
+############################
+# stage: runtime
+############################
+FROM ${RUNTIME_IMAGE} AS runtime
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    jq \
+    openssh-client \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=tools-builder /usr/local/bin/kubectl   /usr/local/bin/kubectl
+COPY --from=tools-builder /usr/local/bin/helm      /usr/local/bin/helm
+COPY --from=tools-builder /usr/local/bin/kustomize /usr/local/bin/kustomize
+COPY --from=tools-builder /usr/local/bin/yq        /usr/local/bin/yq
+COPY --from=tools-builder /usr/local/bin/sops      /usr/local/bin/sops
+COPY --from=tools-builder /usr/local/bin/age       /usr/local/bin/age
+COPY --from=tools-builder /usr/local/bin/age-keygen /usr/local/bin/age-keygen
+
+COPY --from=docker-cli-source /usr/bin/docker                  /usr/bin/docker
+COPY --from=docker-cli-source /usr/libexec/docker/cli-plugins  /usr/libexec/docker/cli-plugins
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/bin/bash"]
+
+############################
+# stage: smoke-test
+############################
+FROM runtime AS smoke-test
+
+RUN bash -lc '\
+  kubectl version --client && \
+  helm version && \
+  kustomize version && \
+  yq --version && \
+  sops --version && \
+  age --version && \
+  docker buildx version && \
+  echo "--- ci-k8s smoke OK ---" \
+'

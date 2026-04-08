@@ -1,7 +1,11 @@
 # syntax=docker/dockerfile:1.7
+# ---------------------------------------------------------------------------
+# Dockerfile — devops-toolkit:full  (local interactive use)
+# Contains every tool.  For lean CI runner images see ci/Dockerfile.*
+# ---------------------------------------------------------------------------
 
-ARG PYTHON_IMAGE=python:3.12-slim-trixie
-ARG RUNTIME_IMAGE=debian:trixie-slim
+ARG PYTHON_IMAGE=python:3.12-slim-bookworm
+ARG RUNTIME_IMAGE=debian:bookworm-slim
 
 ############################
 # stage: docker-cli-source
@@ -35,7 +39,7 @@ FROM ${PYTHON_IMAGE} AS tools-builder
 
 ARG DEBIAN_FRONTEND=noninteractive
 
-ARG ANSIBLE_VERSION
+ARG ANSIBLE_CORE_VERSION
 ARG ANSIBLE_LINT_VERSION
 ARG TERRAFORM_VERSION
 ARG OPENTOFU_VERSION
@@ -67,36 +71,41 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     tar \
     unzip \
-    wget \
-    xz-utils \
-    zip \
     file \
     openssl \
     && rm -rf /var/lib/apt/lists/*
-
-RUN pip install --no-cache-dir \
-    "ansible==${ANSIBLE_VERSION}" \
-    "ansible-lint==${ANSIBLE_LINT_VERSION}"
 
 WORKDIR /tmp/build
 COPY scripts/ /tmp/build/scripts/
 RUN chmod +x /tmp/build/scripts/*.sh
 
-RUN /tmp/build/scripts/install-terraform.sh "${TERRAFORM_VERSION}" && \
-    /tmp/build/scripts/install-opentofu.sh "${OPENTOFU_VERSION}" && \
-    /tmp/build/scripts/install-packer.sh "${PACKER_VERSION}" && \
-    /tmp/build/scripts/install-vault.sh "${VAULT_VERSION}" && \
-    /tmp/build/scripts/install-kubectl.sh "${KUBECTL_VERSION}" && \
-    /tmp/build/scripts/install-helm.sh "${HELM_VERSION}" && \
-    /tmp/build/scripts/install-kustomize.sh "${KUSTOMIZE_VERSION}" && \
-    /tmp/build/scripts/install-trivy.sh "${TRIVY_VERSION}" && \
-    /tmp/build/scripts/install-grype.sh "${GRYPE_VERSION}" && \
-    /tmp/build/scripts/install-yq.sh "${YQ_VERSION}" && \
-    /tmp/build/scripts/install-sops.sh "${SOPS_VERSION}" && \
-    /tmp/build/scripts/install-age.sh "${AGE_VERSION}" && \
-    /tmp/build/scripts/install-gitleaks.sh "${GITLEAKS_VERSION}" && \
-    /tmp/build/scripts/install-syft.sh "${SYFT_VERSION}" && \
-    /tmp/build/scripts/install-k3d.sh "${K3D_VERSION}"
+# Ansible (ansible-core only — much smaller than the community mega-package)
+RUN /tmp/build/scripts/install-ansible.sh "${ANSIBLE_CORE_VERSION}" "${ANSIBLE_LINT_VERSION}"
+
+# Kubernetes tooling
+RUN /tmp/build/scripts/install-kubectl.sh "${KUBECTL_VERSION}"
+RUN /tmp/build/scripts/install-helm.sh "${HELM_VERSION}"
+RUN /tmp/build/scripts/install-kustomize.sh "${KUSTOMIZE_VERSION}"
+RUN /tmp/build/scripts/install-k3d.sh "${K3D_VERSION}"
+
+# Infrastructure as Code
+RUN /tmp/build/scripts/install-terraform.sh "${TERRAFORM_VERSION}"
+RUN /tmp/build/scripts/install-opentofu.sh "${OPENTOFU_VERSION}"
+RUN /tmp/build/scripts/install-packer.sh "${PACKER_VERSION}"
+
+# Secrets
+RUN /tmp/build/scripts/install-vault.sh "${VAULT_VERSION}"
+RUN /tmp/build/scripts/install-sops.sh "${SOPS_VERSION}"
+RUN /tmp/build/scripts/install-age.sh "${AGE_VERSION}"
+
+# Security / supply-chain
+RUN /tmp/build/scripts/install-trivy.sh "${TRIVY_VERSION}"
+RUN /tmp/build/scripts/install-grype.sh "${GRYPE_VERSION}"
+RUN /tmp/build/scripts/install-syft.sh "${SYFT_VERSION}"
+RUN /tmp/build/scripts/install-gitleaks.sh "${GITLEAKS_VERSION}"
+
+# Utilities
+RUN /tmp/build/scripts/install-yq.sh "${YQ_VERSION}"
 
 ############################
 # stage: runtime
@@ -113,6 +122,9 @@ ENV LANG=C.UTF-8 \
     PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
     ANSIBLE_CONFIG=/workspace/ansible.cfg
 
+# Runtime apt packages — only what tools actually need at runtime
+# NOTE: wget intentionally excluded (curl covers all use cases)
+#       iproute2/iputils-ping are interactive diagnostics, not pipeline deps
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
@@ -123,32 +135,29 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     openssh-client \
     tar \
     unzip \
-    wget \
-    xz-utils \
-    zip \
-    vim-nox \
-    tini \
     openssl \
+    tini \
+    vim-nox \
     iproute2 \
     iputils-ping \
     && rm -rf /var/lib/apt/lists/*
 
-# Python runtime for ansible
+# Python runtime + all /usr/local/bin binaries from builder in one layer
 COPY --from=tools-builder /usr/local /usr/local
 
-# Terraform bianry from builder
+# HashiCorp apt-installed binaries land in /usr/bin, not /usr/local/bin
 COPY --from=tools-builder /usr/bin/terraform /usr/bin/terraform
-COPY --from=tools-builder /usr/bin/vault /usr/bin/vault
+COPY --from=tools-builder /usr/bin/vault     /usr/bin/vault
 
-# Docker client tooling from official Docker repo stage
-COPY --from=docker-cli-source /usr/bin/docker /usr/bin/docker
+# Docker CLI from official Docker apt stage
+COPY --from=docker-cli-source /usr/bin/docker               /usr/bin/docker
 COPY --from=docker-cli-source /usr/libexec/docker/cli-plugins /usr/libexec/docker/cli-plugins
 
-# Create non-root user for local usage
-RUN groupadd --gid "${GID}" "${USERNAME}" && \
-    useradd --uid "${UID}" --gid "${GID}" --create-home --shell /bin/bash "${USERNAME}" && \
-    mkdir -p /workspace && \
-    chown -R "${USERNAME}:${USERNAME}" /workspace /home/"${USERNAME}"
+# Non-root user for local interactive use
+RUN groupadd --gid "${GID}" "${USERNAME}" \
+    && useradd --uid "${UID}" --gid "${GID}" --create-home --shell /bin/bash "${USERNAME}" \
+    && mkdir -p /workspace \
+    && chown -R "${USERNAME}:${USERNAME}" /workspace /home/"${USERNAME}"
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/bin/tini", "--"]
@@ -160,18 +169,30 @@ CMD ["/bin/bash"]
 FROM runtime AS smoke-test
 
 RUN bash -lc '\
+  echo "--- Python / Ansible ---" && \
   python3 --version && \
   ansible --version && \
   ansible-lint --version && \
-  terraform version && \
-  tofu version && \
-  packer version && \
-  vault version && \
+  echo "--- Kubernetes ---" && \
   kubectl version --client && \
   helm version && \
   kustomize version && \
+  k3d version && \
+  echo "--- IaC ---" && \
+  terraform version && \
+  tofu version && \
+  packer version && \
+  echo "--- Secrets ---" && \
+  vault version && \
+  sops --version && \
+  age --version && \
+  echo "--- Security ---" && \
   trivy version && \
   grype version && \
   syft version && \
-  docker buildx version \
+  gitleaks version && \
+  echo "--- Utilities ---" && \
+  yq --version && \
+  docker buildx version && \
+  echo "--- All tools OK ---" \
 '

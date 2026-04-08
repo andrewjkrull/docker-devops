@@ -1,0 +1,117 @@
+# syntax=docker/dockerfile:1.7
+# ---------------------------------------------------------------------------
+# ci/Dockerfile.security — devops-toolkit:ci-security
+#
+# Purpose-built CI runner for security scanning pipeline steps.
+# Tools: trivy, grype, syft, gitleaks, docker CLI (to pull images for scan)
+#
+# What it does NOT include (and why):
+#   - ansible/terraform  — not needed to run scanners
+#   - kubectl/helm       — not needed to run scanners
+#   - sops/age           — secrets management, separate concern
+#   - vault              — not needed for scanning
+#   - vim/ping           — interactive diagnostics, not CI deps
+# ---------------------------------------------------------------------------
+
+ARG RUNTIME_IMAGE=debian:bookworm-slim
+
+############################
+# stage: docker-cli-source
+############################
+FROM ${RUNTIME_IMAGE} AS docker-cli-source
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+      | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && . /etc/os-release \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian ${VERSION_CODENAME} stable" \
+      > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+      docker-ce-cli \
+      docker-buildx-plugin \
+    && rm -rf /var/lib/apt/lists/*
+
+############################
+# stage: tools-builder
+############################
+FROM ${RUNTIME_IMAGE} AS tools-builder
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+ARG TRIVY_VERSION
+ARG GRYPE_VERSION
+ARG SYFT_VERSION
+ARG GITLEAKS_VERSION
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    tar \
+    file \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /tmp/build
+COPY scripts/ /tmp/build/scripts/
+RUN chmod +x /tmp/build/scripts/*.sh
+
+RUN /tmp/build/scripts/install-trivy.sh "${TRIVY_VERSION}"
+RUN /tmp/build/scripts/install-grype.sh "${GRYPE_VERSION}"
+RUN /tmp/build/scripts/install-syft.sh "${SYFT_VERSION}"
+RUN /tmp/build/scripts/install-gitleaks.sh "${GITLEAKS_VERSION}"
+
+############################
+# stage: runtime
+############################
+FROM ${RUNTIME_IMAGE} AS runtime
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+ENV LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    curl \
+    git \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=tools-builder /usr/local/bin/trivy     /usr/local/bin/trivy
+COPY --from=tools-builder /usr/local/bin/grype     /usr/local/bin/grype
+COPY --from=tools-builder /usr/local/bin/syft      /usr/local/bin/syft
+COPY --from=tools-builder /usr/local/bin/gitleaks  /usr/local/bin/gitleaks
+
+COPY --from=docker-cli-source /usr/bin/docker                 /usr/bin/docker
+COPY --from=docker-cli-source /usr/libexec/docker/cli-plugins /usr/libexec/docker/cli-plugins
+
+WORKDIR /workspace
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["/bin/bash"]
+
+############################
+# stage: smoke-test
+############################
+FROM runtime AS smoke-test
+
+RUN bash -lc '\
+  trivy version && \
+  grype version && \
+  syft version && \
+  gitleaks version && \
+  docker buildx version && \
+  echo "--- ci-security smoke OK ---" \
+'

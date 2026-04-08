@@ -1,373 +1,275 @@
 # DevOps Toolkit Container
 
-A reproducible **DevOps toolbox container** designed for:
-
-- Local infrastructure development
-- GitOps / CI pipelines
-- Homelab automation
-- Infrastructure as Code workflows
-
-This image packages a curated set of DevOps tooling for working with:
-
-- Infrastructure provisioning
-- Configuration management
-- Kubernetes operations
-- Container building
-- Security scanning
-- Supply-chain analysis
-
-The goal is to provide a **single containerized control environment** that can be used locally or inside CI runners.
+A reproducible, version-pinned DevOps toolbox built for local development, GitOps workflows,
+and CI/CD pipelines.  All tool versions are controlled from a single file (`versions.env`).
 
 ---
 
-# Features
+## Images
 
-- Version-pinned tooling via `versions.env`
-- Multi-stage Docker build for smaller image size
-- Compatible with **Docker socket mount** for container builds
-- Ready for **CI usage (Gitea / GitHub / GitLab)**
-- Easy to extend by adding installer scripts
+| Tag | Use case | Approx. size |
+|-----|----------|-------------|
+| `devops-toolkit:full` | Local interactive development | ~900 MB |
+| `devops-toolkit:ci-k8s` | CI — Kubernetes deploy steps | ~250 MB |
+| `devops-toolkit:ci-security` | CI — security scanning steps | ~400 MB |
+| `devops-toolkit:ci-iac` | CI — infrastructure provisioning steps | ~350 MB |
 
----
-
-# Installed Tools
-
-## Infrastructure as Code
-
-| Tool | Purpose |
-|-----|-----|
-| Terraform | Infrastructure provisioning |
-| OpenTofu | Open source Terraform alternative |
-| Packer | Image building |
-| Ansible | Configuration management |
+`full` is the daily driver image — it contains everything.
+The `ci-*` images are purpose-built for specific pipeline stages: lean, fast to pull, no extras.
 
 ---
 
-## Kubernetes Tooling
+## Quick start
 
-| Tool | Purpose |
-|-----|-----|
-| kubectl | Kubernetes CLI |
-| Helm | Kubernetes package manager |
-| Kustomize | Kubernetes manifest customization |
+```bash
+# Build the local full image
+make build
 
----
+# Interactive shell with workspace + Docker socket mounted
+make run
 
-## Container Tooling
+# Build all CI runner images
+make ci-all
 
-| Tool | Purpose |
-|-----|-----|
-| Docker CLI | Container build/push |
-| Docker Buildx | Multi-platform builds |
-| Docker Compose | Compose workflow support |
-
----
-
-## Security & Supply Chain
-
-| Tool | Purpose |
-|-----|-----|
-| Trivy | Container vulnerability scanner |
-| Grype | Vulnerability scanner |
-| Syft | SBOM generation |
-| Gitleaks | Secret detection |
+# Smoke-test everything
+make smoke
+make ci-smoke-all
+```
 
 ---
 
-## Secrets Management
+## Repository layout
 
-| Tool | Purpose |
-|-----|-----|
-| SOPS | Secret encryption |
-| age | Encryption backend for SOPS |
-
----
-
-## Utilities
-
-| Tool | Purpose |
-|-----|-----|
-| jq | JSON processing |
-| yq | YAML processing |
-| git | Source control |
-| curl / wget | Network utilities |
-| make | Build automation |
-| ssh client | Remote access |
-
----
-
-# Repository Layout
-devops-toolkit/
-│
-├── Dockerfile
+```
+docker-devops/
+├── Dockerfile              # :full image (everything)
 ├── Makefile
-├── versions.env
+├── versions.env            # single source of truth for all versions
 ├── README.md
+├── toolkit-CONTEXT.md      # AI session handoff document
 │
 ├── scripts/
-│ ├── _common.sh
-│ ├── install-terraform.sh
-│ ├── install-opentofu.sh
-│ ├── install-packer.sh
-│ ├── install-kubectl.sh
-│ ├── install-helm.sh
-│ ├── install-kustomize.sh
-│ ├── install-trivy.sh
-│ ├── install-grype.sh
-│ ├── install-syft.sh
-│ ├── install-yq.sh
-│ ├── install-sops.sh
-│ ├── install-age.sh
-│ └── install-gitleaks.sh
+│   ├── _common.sh          # shared helpers: log(), map_arch(), download_file()
+│   ├── install-ansible.sh  # takes CORE_VERSION LINT_VERSION
+│   ├── install-terraform.sh
+│   ├── install-opentofu.sh
+│   ├── install-packer.sh
+│   ├── install-vault.sh
+│   ├── install-kubectl.sh
+│   ├── install-helm.sh
+│   ├── install-kustomize.sh
+│   ├── install-k3d.sh
+│   ├── install-trivy.sh
+│   ├── install-grype.sh
+│   ├── install-syft.sh
+│   ├── install-gitleaks.sh
+│   ├── install-yq.sh
+│   ├── install-sops.sh
+│   └── install-age.sh
 │
-└── .gitea/workflows/
-
-Each tool is installed through a dedicated script to make it easy to add or upgrade tools.
+└── ci/
+    ├── Dockerfile.k8s      # :ci-k8s  — kubectl, helm, kustomize, yq, sops, age, docker
+    ├── Dockerfile.security # :ci-security — trivy, grype, syft, gitleaks, docker
+    └── Dockerfile.iac      # :ci-iac  — terraform, tofu, vault, sops, age, yq
+```
 
 ---
 
-# Version Management
+## Tool inventory
 
-Tool versions are controlled via:
+### Full image (:full)
 
+| Category | Tools |
+|----------|-------|
+| Kubernetes | kubectl, helm, kustomize, k3d |
+| IaC | terraform, opentofu, packer |
+| Config mgmt | ansible-core + ansible-lint |
+| Secrets | vault, sops, age |
+| Security | trivy, grype, syft, gitleaks |
+| Container | docker CLI, buildx, compose |
+| Utilities | jq, yq, git, curl, make, openssh, tini, vim |
+
+### CI images — what each one includes
+
+| Tool | ci-k8s | ci-security | ci-iac |
+|------|--------|-------------|--------|
+| kubectl | yes | - | - |
+| helm | yes | - | - |
+| kustomize | yes | - | - |
+| yq | yes | - | yes |
+| sops | yes | - | yes |
+| age | yes | - | yes |
+| docker CLI | yes | yes | - |
+| trivy | - | yes | - |
+| grype | - | yes | - |
+| syft | - | yes | - |
+| gitleaks | - | yes | - |
+| terraform | - | - | yes |
+| opentofu | - | - | yes |
+| vault | - | - | yes |
+
+---
+
+## Makefile reference
+
+### Full image
+
+| Target | Description |
+|--------|-------------|
+| `make build` | Build `devops-toolkit:full` (also tags `:latest`) |
+| `make smoke` | Build to smoke-test stage; validates all tools |
+| `make run` | Interactive shell with workspace + Docker socket |
+
+### CI images
+
+| Target | Description |
+|--------|-------------|
+| `make ci-k8s` | Build `devops-toolkit:ci-k8s` |
+| `make ci-security` | Build `devops-toolkit:ci-security` |
+| `make ci-iac` | Build `devops-toolkit:ci-iac` |
+| `make ci-all` | Build all three CI images |
+| `make ci-smoke-k8s` | Smoke-test ci-k8s |
+| `make ci-smoke-sec` | Smoke-test ci-security |
+| `make ci-smoke-iac` | Smoke-test ci-iac |
+| `make ci-smoke-all` | Smoke-test all CI images |
+
+### Housekeeping
+
+| Target | Description |
+|--------|-------------|
+| `make versions` | Print all pinned versions |
+| `make clean` | Remove all built images |
+
+Override image name or tag:
+
+```bash
+make build IMAGE_NAME=myregistry.local/devops-toolkit IMAGE_TAG=1.2.3
+make ci-k8s IMAGE_NAME=myregistry.local/devops-toolkit
 ```
-versions.env
-```
 
-Example:
+---
 
-```
-TERRAFORM_VERSION=1.14.6
-ANSIBLE_VERSION=13.0.1
+## Version management
+
+All versions live in `versions.env` — one file, one change to update any tool:
+
+```bash
+# versions.env
+KUBECTL_VERSION=1.34.1
+HELM_VERSION=3.19.0
 TRIVY_VERSION=0.69.3
+# ...
 ```
 
-
-Updating a tool only requires changing the version in this file and rebuilding the image.
+The Makefile reads `versions.env` and passes every version as a `--build-arg`.
+To update a tool: change the version in `versions.env` and rebuild.
 
 ---
 
-# Building the Image
+## Gitea Actions — using the CI images
 
-Build using the provided Makefile.
+Reference the image directly in your workflow steps.
+The Docker socket is available inside Gitea Actions runners that use the
+`docker-outside-of-docker` pattern (socket mounted at `/var/run/docker.sock`).
 
-```
-make build
-```
+```yaml
+# .gitea/workflows/deploy.yaml
+jobs:
+  deploy:
+    runs-on: self-hosted
+    container:
+      image: devops-toolkit:ci-k8s
+    steps:
+      - uses: actions/checkout@v4
 
-Or specify custom tags:
-
-```
-make build IMAGE_NAME=devops-toolkit IMAGE_TAG=latest
-```
-
-
----
-
-# Running the Container
-
-Run an interactive shell with the workspace mounted.
-
-```
-make run
+      - name: Deploy with Helm
+        run: |
+          helm upgrade --install myapp ./charts/myapp \
+            --namespace myapp \
+            --values values.prod.yaml
 ```
 
-Equivalent manual command:
+```yaml
+# .gitea/workflows/scan.yaml
+jobs:
+  scan:
+    runs-on: self-hosted
+    container:
+      image: devops-toolkit:ci-security
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Scan image
+        run: |
+          trivy image myapp:${GITEA_SHA}
+          grype myapp:${GITEA_SHA}
+          syft myapp:${GITEA_SHA} -o spdx-json > sbom.json
 ```
 
-```
+```yaml
+# .gitea/workflows/infra.yaml
+jobs:
+  plan:
+    runs-on: self-hosted
+    container:
+      image: devops-toolkit:ci-iac
+    steps:
+      - uses: actions/checkout@v4
 
-
-This allows the container to:
-
-- access your project files
-- use your SSH keys
-- build containers using the host Docker daemon
-
----
-
-# Running Terraform
-
-```
-terraform init
-terraform plan
-terraform apply
-```
-
----
-
-# Running Ansible
-
-```
-ansible-playbook playbook.yml
-```
-
----
-
-# Kubernetes Usage
-
-```
-kubectl get pods
-helm list
-kustomize build .
+      - name: Terraform plan
+        run: |
+          terraform init
+          terraform plan
 ```
 
 ---
 
-# Container Builds
+## Extending the toolkit
 
-Because the Docker CLI is included, you can build and push containers directly.
+To add a new tool to the full image:
 
-```
-docker build -t myapp:latest .
-docker push registry.example.com/myapp:latest
-```
+1. Create `scripts/install-newtool.sh` (takes version as `$1`, installs to `/usr/local/bin/`)
+2. Add `NEWTOOL_VERSION=x.y.z` to `versions.env`
+3. Add `ARG NEWTOOL_VERSION` to the `tools-builder` stage in `Dockerfile`
+4. Add `RUN /tmp/build/scripts/install-newtool.sh "${NEWTOOL_VERSION}"` to `Dockerfile`
+5. Add `--build-arg NEWTOOL_VERSION=$(NEWTOOL_VERSION)` to `FULL_BUILD_ARGS` in `Makefile`
+6. Add the binary `COPY --from=tools-builder` line to the `runtime` stage in `Dockerfile`
+7. Add a `make versions` print line and a smoke-test check
+8. Run `make smoke` before `make build`
 
-The container communicates with the **host Docker daemon** through:
-
-```
-/var/run/docker.sock
-```
-
-This avoids running Docker-in-Docker.
+To add the tool to a CI image, apply the same pattern to the relevant `ci/Dockerfile.*`.
 
 ---
 
-# Security Scanning Example
+## Ansible note
 
-Generate an SBOM:
+The full image uses `ansible-core` rather than the community `ansible` mega-package.
+`ansible-core` includes the engine, the standard library of modules, and `ansible-lint`.
+The community package adds hundreds of third-party collections that are rarely needed.
 
-```
-syft myimage:latest
-```
+If your playbooks require specific community collections, install them at runtime:
 
-
-Scan for vulnerabilities:
-
-```
-grype myimage:latest
-trivy image myimage:latest
+```bash
+ansible-galaxy collection install community.general
 ```
 
-Example CI pipeline step:
+Or bake them into a derived image:
 
-```
-docker build -t app:${GIT_SHA} .
-syft app:${GIT_SHA} -o spdx-json > sbom.json
-grype app:${GIT_SHA}
-trivy image app:${GIT_SHA}
+```dockerfile
+FROM devops-toolkit:full
+RUN ansible-galaxy collection install community.general community.kubernetes
 ```
 
 ---
 
-# Makefile Targets
+## Notes on tool choices
 
-| Command | Description |
-|-------|--------|
-| `make build` | Build the container |
-| `make run` | Start interactive dev container |
-| `make smoke` | Run tool validation build |
-| `make clean` | Remove image |
+**Terraform and OpenTofu** — both are included. They are functionally equivalent for
+this PoC. To drop one, comment out its version in `versions.env` and remove its
+`ARG`/`RUN`/`COPY` lines from the relevant Dockerfiles.
 
----
+**k3d** — only in the full image. It's a local cluster management tool, not needed
+in CI pipeline steps that operate against an existing cluster.
 
-# CI Usage Example (Gitea)
-
-Example workflow:
-
-```
-
-```
-
-steps:
-  - uses: actions/checkout@v4
-
-  - name: Terraform
-    run: terraform version
-
-  - name: Docker build
-    run: docker build -t myapp:${GITHUB_SHA} .
-
----
-
-# Extending the Toolkit
-
-To add a new tool:
-
-1. Create an install script
-
-```
-scripts/install-mytool.sh
-```
-
-2. Add version to versions.env
-
-```
-MYTOOL_VERSION=X.X.X
-```
-
-3. Add Dockerfile build argument
-
-```
-ARG MYTOOL_VERSION
-```
-
-4. Call installer in Dockerfile
-
-```
-RUN /tmp/build/scripts/install-mytool.sh "${MYTOOL_VERSION}"
-```
-
-5. Add new tool variables to Makefile
-
-BUILD_ARGS
-
-```
---build-arg MYTOOL_VERSION=$(MYTOOL_VERSION)
-```
-
-versions:
-
-```
-@echo "MYTOOL_VERSION=$(MYTOOL_VERSION)"
-```
-
----
-
-# Recommended Usage
-
-This container works well as a **DevOps control node** for:
-
-- Homelab automation
-- GitOps workflows
-- CI pipelines
-- Infrastructure deployments
-
-The same environment can be used:
-
-- locally
-- inside Gitea runners
-- in CI pipelines
-- inside ephemeral development containers
-
----
-
-# Future Improvements
-
-Possible additions:
-
-- Cosign (container signing)
-- Flux CLI
-- ArgoCD CLI
-- kubeconform
-- tfsec
-- hadolint
-- Azure CLI
-- AWS CLI
-
----
-
-# License
-
-MIT License
+**Packer** — only in the full image and `ci-iac`. Useful for building VM images as
+part of an IaC workflow; not needed for Kubernetes deploy or security scan steps.
