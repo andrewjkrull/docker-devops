@@ -12,7 +12,7 @@ and CI/CD pipelines.  All tool versions are controlled from a single file (`vers
 | `devops-toolkit:full` | Local interactive development | ~900 MB |
 | `devops-toolkit:ci-k8s` | CI — Kubernetes deploy steps | ~250 MB |
 | `devops-toolkit:ci-security` | CI — security scanning steps | ~400 MB |
-| `devops-toolkit:ci-iac` | CI — infrastructure provisioning steps | ~350 MB |
+| `devops-toolkit:ci-iac` | CI — infrastructure provisioning steps | ~550 MB |
 
 `full` is the daily driver image — it contains everything.
 The `ci-*` images are purpose-built for specific pipeline stages: lean, fast to pull, no extras.
@@ -65,12 +65,14 @@ docker-devops/
 │   ├── install-gitleaks.sh
 │   ├── install-yq.sh
 │   ├── install-sops.sh
-│   └── install-age.sh
+│   ├── install-age.sh
+│   ├── install-awscli.sh
+│   └── install-azurecli.sh
 │
 └── ci/
     ├── Dockerfile.k8s      # :ci-k8s  — kubectl, helm, kustomize, yq, sops, age, docker
     ├── Dockerfile.security # :ci-security — trivy, grype, syft, gitleaks, docker
-    └── Dockerfile.iac      # :ci-iac  — terraform, tofu, vault, sops, age, yq
+    └── Dockerfile.iac      # :ci-iac  — terraform, tofu, vault, sops, age, yq, aws, az
 ```
 
 ---
@@ -86,6 +88,7 @@ docker-devops/
 | Config mgmt | ansible-core + ansible-lint |
 | Secrets | vault, sops, age |
 | Security | trivy, grype, syft, gitleaks |
+| Cloud CLIs | aws, az |
 | Container | docker CLI, buildx, compose |
 | Utilities | jq, yq, git, curl, make, openssh, tini, vim |
 
@@ -107,6 +110,8 @@ docker-devops/
 | terraform | - | - | yes |
 | opentofu | - | - | yes |
 | vault | - | - | yes |
+| aws CLI | - | - | yes |
+| azure CLI | - | - | yes |
 
 ---
 
@@ -163,6 +168,16 @@ TRIVY_VERSION=0.69.3
 
 The Makefile reads `versions.env` and passes every version as a `--build-arg`.
 To update a tool: change the version in `versions.env` and rebuild.
+
+---
+
+## Documentation
+
+Operational runbooks and usage guides live in `docs/`:
+
+| Document | Description |
+|----------|-------------|
+| [`docs/cloud-credentials.md`](docs/cloud-credentials.md) | Supplying AWS and Azure credentials — env vars, file mounts, and CI pipeline patterns |
 
 ---
 
@@ -263,6 +278,11 @@ RUN ansible-galaxy collection install community.general community.kubernetes
 ---
 
 ## Notes on tool choices
+
+**AWS CLI and Azure CLI** — both are included in `:full` and `:ci-iac`. AWS CLI
+installs from the official versioned zip into `/usr/local/aws-cli` with a symlink
+at `/usr/local/bin/aws`. Azure CLI installs via Microsoft's apt repo into `/usr/bin/az`.
+See `docs/cloud-credentials.md` for credential patterns.
 
 **Terraform and OpenTofu** — both are included. They are functionally equivalent for
 this PoC. To drop one, comment out its version in `versions.env` and remove its
