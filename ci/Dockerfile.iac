@@ -30,6 +30,8 @@ ARG VAULT_VERSION
 ARG SOPS_VERSION
 ARG AGE_VERSION
 ARG YQ_VERSION
+ARG AWSCLI_VERSION
+ARG AZURECLI_VERSION
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -54,6 +56,8 @@ RUN /tmp/build/scripts/install-vault.sh "${VAULT_VERSION}"
 RUN /tmp/build/scripts/install-sops.sh "${SOPS_VERSION}"
 RUN /tmp/build/scripts/install-age.sh "${AGE_VERSION}"
 RUN /tmp/build/scripts/install-yq.sh "${YQ_VERSION}"
+RUN /tmp/build/scripts/install-awscli.sh "${AWSCLI_VERSION}"
+RUN /tmp/build/scripts/install-azurecli.sh "${AZURECLI_VERSION}"
 
 ############################
 # stage: runtime
@@ -84,6 +88,10 @@ COPY --from=tools-builder /usr/local/bin/sops   /usr/local/bin/sops
 COPY --from=tools-builder /usr/local/bin/age    /usr/local/bin/age
 COPY --from=tools-builder /usr/local/bin/age-keygen /usr/local/bin/age-keygen
 COPY --from=tools-builder /usr/local/bin/yq     /usr/local/bin/yq
+COPY --from=tools-builder /usr/local/aws-cli    /usr/local/aws-cli
+COPY --from=tools-builder /usr/local/bin/aws    /usr/local/bin/aws
+COPY --from=tools-builder /usr/bin/az           /usr/bin/az
+COPY --from=tools-builder /opt/az               /opt/az
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/bin/tini", "--"]
@@ -101,5 +109,7 @@ RUN bash -lc '\
   sops --version && \
   age --version && \
   yq --version && \
+  aws --version && \
+  az version && \
   echo "--- ci-iac smoke OK ---" \
 '

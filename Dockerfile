@@ -56,6 +56,8 @@ ARG AGE_VERSION
 ARG GITLEAKS_VERSION
 ARG SYFT_VERSION
 ARG K3D_VERSION
+ARG AWSCLI_VERSION
+ARG AZURECLI_VERSION
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
@@ -107,6 +109,10 @@ RUN /tmp/build/scripts/install-gitleaks.sh "${GITLEAKS_VERSION}"
 # Utilities
 RUN /tmp/build/scripts/install-yq.sh "${YQ_VERSION}"
 
+# Cloud CLIs
+RUN /tmp/build/scripts/install-awscli.sh "${AWSCLI_VERSION}"
+RUN /tmp/build/scripts/install-azurecli.sh "${AZURECLI_VERSION}"
+
 ############################
 # stage: runtime
 ############################
@@ -148,6 +154,10 @@ COPY --from=tools-builder /usr/local /usr/local
 # HashiCorp apt-installed binaries land in /usr/bin, not /usr/local/bin
 COPY --from=tools-builder /usr/bin/terraform /usr/bin/terraform
 COPY --from=tools-builder /usr/bin/vault     /usr/bin/vault
+
+# Cloud CLIs
+COPY --from=tools-builder /usr/bin/az  /usr/bin/az
+COPY --from=tools-builder /opt/az      /opt/az
 
 # Docker CLI from official Docker apt stage
 COPY --from=docker-cli-source /usr/bin/docker               /usr/bin/docker
@@ -194,5 +204,8 @@ RUN bash -lc '\
   echo "--- Utilities ---" && \
   yq --version && \
   docker buildx version && \
+  echo "--- Cloud CLIs ---" && \
+  aws --version && \
+  az version && \
   echo "--- All tools OK ---" \
 '

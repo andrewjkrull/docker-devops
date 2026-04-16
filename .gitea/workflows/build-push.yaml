@@ -183,6 +183,8 @@ jobs:
             --build-arg SYFT_VERSION=${{ steps.versions.outputs.SYFT_VERSION }} \
             --build-arg K3D_VERSION=${{ steps.versions.outputs.K3D_VERSION }} \
             --build-arg DOCKER_VERSION=${{ steps.versions.outputs.DOCKER_VERSION }} \
+            --build-arg AWSCLI_VERSION=${{ steps.versions.outputs.AWSCLI_VERSION }} \
+            --build-arg AZURECLI_VERSION=${{ steps.versions.outputs.AZURECLI_VERSION }} \
             -f Dockerfile \
             --target smoke-test \
             -t "${BASE}:full" \
@@ -264,6 +266,8 @@ jobs:
               SOPS_VERSION
               AGE_VERSION
               YQ_VERSION
+              AWSCLI_VERSION
+              AZURECLI_VERSION
 
     steps:
       - uses: actions/checkout@v4
@@ -318,6 +322,8 @@ jobs:
               AGE_VERSION)          value="${{ steps.versions.outputs.AGE_VERSION }}" ;;
               DOCKER_VERSION)       value="${{ steps.versions.outputs.DOCKER_VERSION }}" ;;
               K3D_VERSION)          value="${{ steps.versions.outputs.K3D_VERSION }}" ;;
+              AWSCLI_VERSION)       value="${{ steps.versions.outputs.AWSCLI_VERSION }}" ;;
+              AZURECLI_VERSION)     value="${{ steps.versions.outputs.AZURECLI_VERSION }}" ;;
             esac
             if [[ -n "${value}" ]]; then
               BUILD_ARG_FLAGS="${BUILD_ARG_FLAGS} --build-arg ${varname}=${value}"

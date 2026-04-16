@@ -49,7 +49,9 @@ FULL_BUILD_ARGS = \
   --build-arg GITLEAKS_VERSION=$(GITLEAKS_VERSION) \
   --build-arg SYFT_VERSION=$(SYFT_VERSION) \
   --build-arg K3D_VERSION=$(K3D_VERSION) \
-  --build-arg DOCKER_VERSION=$(DOCKER_VERSION)
+  --build-arg DOCKER_VERSION=$(DOCKER_VERSION) \
+  --build-arg AWSCLI_VERSION=$(AWSCLI_VERSION) \
+  --build-arg AZURECLI_VERSION=$(AZURECLI_VERSION)
 
 K8S_BUILD_ARGS = \
   --build-arg KUBECTL_VERSION=$(KUBECTL_VERSION) \
@@ -71,7 +73,9 @@ IAC_BUILD_ARGS = \
   --build-arg VAULT_VERSION=$(VAULT_VERSION) \
   --build-arg SOPS_VERSION=$(SOPS_VERSION) \
   --build-arg AGE_VERSION=$(AGE_VERSION) \
-  --build-arg YQ_VERSION=$(YQ_VERSION)
+  --build-arg YQ_VERSION=$(YQ_VERSION) \
+  --build-arg AWSCLI_VERSION=$(AWSCLI_VERSION) \
+  --build-arg AZURECLI_VERSION=$(AZURECLI_VERSION)
 
 # ---------------------------------------------------------------------------
 # Full image
@@ -188,6 +192,10 @@ versions:
 	@echo "  GITLEAKS_VERSION=$(GITLEAKS_VERSION)"
 	@echo "--- Utilities ---"
 	@echo "  YQ_VERSION=$(YQ_VERSION)"
+	@echo "--- Cloud CLIs ---"
+	@echo "  AWSCLI_VERSION=$(AWSCLI_VERSION)"
+	@echo "  AZURECLI_VERSION=$(AZURECLI_VERSION)"
+	@echo "--- Container tooling ---"
 	@echo "  DOCKER_VERSION=$(DOCKER_VERSION)"
 
 .PHONY: clean
