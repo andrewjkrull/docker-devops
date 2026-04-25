@@ -86,7 +86,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/files/bin
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash \
@@ -108,6 +108,26 @@ COPY --from=tools-builder /usr/local/bin/age-keygen /usr/local/bin/age-keygen
 
 COPY --from=docker-cli-source /usr/bin/docker                  /usr/bin/docker
 COPY --from=docker-cli-source /usr/libexec/docker/cli-plugins  /usr/libexec/docker/cli-plugins
+
+# ---------------------------------------------------------------------------
+# Bundled files
+#
+# files/custom-ca/  — additional root CAs trusted by the image (opt-in).
+#                     Drop .crt files here for environments with internal CAs.
+# files/bin/        — bundled into the image at /files/bin/, on PATH.
+#                     Scripts here are callable by name.
+# files/share/      — bundled into the image at /files/. Catch-all for
+#                     templates, configs, static helper content.
+#
+# All three directories are empty by default so a vanilla `docker build`
+# works without any configuration.
+# ---------------------------------------------------------------------------
+COPY files/custom-ca/ /usr/local/share/ca-certificates/custom-ca/
+RUN update-ca-certificates
+
+COPY files/bin/   /files/bin/
+COPY files/share/ /files/
+RUN chmod +x /files/bin/* 2>/dev/null || true
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/bin/tini", "--"]

@@ -73,7 +73,33 @@ docker-devops/
     ├── Dockerfile.k8s      # :ci-k8s  — kubectl, helm, kustomize, yq, sops, age, docker
     ├── Dockerfile.security # :ci-security — trivy, grype, syft, gitleaks, docker
     └── Dockerfile.iac      # :ci-iac  — terraform, tofu, vault, sops, age, yq, aws, az
+
+files/                      # bundled into the built image — see "Bundled files"
+├── custom-ca/              # opt-in root CAs for environments with internal PKI
+├── bin/                    # custom scripts → /files/bin/ in image (on PATH)
+└── share/                  # static content → /files/ in image
 ```
+
+---
+
+## Bundled files
+
+The `files/` directory is the contract for getting custom content into the
+built image. All three subdirectories are empty by default — vanilla builds
+work with no configuration.
+
+| Source in repo       | Destination in image                          | Notes                              |
+|----------------------|-----------------------------------------------|------------------------------------|
+| `files/custom-ca/`   | `/usr/local/share/ca-certificates/custom-ca/` | `update-ca-certificates` is run    |
+| `files/bin/`         | `/files/bin/` — appended to `PATH`            | Scripts callable by name           |
+| `files/share/`       | `/files/`                                     | Catch-all for templates and config |
+
+`/files/bin/` is appended *after* the standard system paths, so scripts there
+add commands but cannot shadow system tools of the same name. The build
+applies `chmod +x /files/bin/*` defensively, but committing scripts as
+executable is the cleaner habit.
+
+See `files/README.md` for full details and a worked example.
 
 ---
 

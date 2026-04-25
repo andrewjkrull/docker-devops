@@ -125,7 +125,7 @@ ARG GID=1000
 
 ENV LANG=C.UTF-8 \
     LC_ALL=C.UTF-8 \
-    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PATH=/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin:/files/bin \
     ANSIBLE_CONFIG=/workspace/ansible.cfg
 
 # Runtime apt packages — only what tools actually need at runtime
@@ -168,6 +168,26 @@ RUN groupadd --gid "${GID}" "${USERNAME}" \
     && useradd --uid "${UID}" --gid "${GID}" --create-home --shell /bin/bash "${USERNAME}" \
     && mkdir -p /workspace \
     && chown -R "${USERNAME}:${USERNAME}" /workspace /home/"${USERNAME}"
+
+# ---------------------------------------------------------------------------
+# Bundled files
+#
+# files/custom-ca/  — additional root CAs trusted by the image (opt-in).
+#                     Drop .crt files here for environments with internal CAs.
+# files/bin/        — bundled into the image at /files/bin/, on PATH.
+#                     Scripts here are callable by name.
+# files/share/      — bundled into the image at /files/. Catch-all for
+#                     templates, configs, static helper content.
+#
+# All three directories are empty by default so a vanilla `docker build`
+# works without any configuration.
+# ---------------------------------------------------------------------------
+COPY files/custom-ca/ /usr/local/share/ca-certificates/custom-ca/
+RUN update-ca-certificates
+
+COPY files/bin/   /files/bin/
+COPY files/share/ /files/
+RUN chmod +x /files/bin/* 2>/dev/null || true
 
 WORKDIR /workspace
 ENTRYPOINT ["/usr/bin/tini", "--"]
