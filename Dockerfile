@@ -146,6 +146,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     vim-nox \
     iproute2 \
     iputils-ping \
+    sshpass \
     && rm -rf /var/lib/apt/lists/*
 
 # Python runtime + all /usr/local/bin binaries from builder in one layer
