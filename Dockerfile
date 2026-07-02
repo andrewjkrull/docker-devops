@@ -41,6 +41,7 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 ARG ANSIBLE_CORE_VERSION
 ARG ANSIBLE_LINT_VERSION
+ARG ANSIBLE_NETADDR_VERSION
 ARG TERRAFORM_VERSION
 ARG OPENTOFU_VERSION
 ARG PACKER_VERSION
@@ -82,7 +83,7 @@ COPY scripts/ /tmp/build/scripts/
 RUN chmod +x /tmp/build/scripts/*.sh
 
 # Ansible (ansible-core only — much smaller than the community mega-package)
-RUN /tmp/build/scripts/install-ansible.sh "${ANSIBLE_CORE_VERSION}" "${ANSIBLE_LINT_VERSION}"
+RUN /tmp/build/scripts/install-ansible.sh "${ANSIBLE_CORE_VERSION}" "${ANSIBLE_LINT_VERSION}" "${ANSIBLE_NETADDR_VERSION}"
 
 # Kubernetes tooling
 RUN /tmp/build/scripts/install-kubectl.sh "${KUBECTL_VERSION}"
@@ -204,6 +205,7 @@ RUN bash -lc '\
   python3 --version && \
   ansible --version && \
   ansible-lint --version && \
+  python3 -c "import netaddr" && echo "netaddr OK" && \
   echo "--- Kubernetes ---" && \
   kubectl version --client && \
   helm version && \

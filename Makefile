@@ -11,10 +11,12 @@
 #     make ci-k8s         build devops-toolkit:ci-k8s
 #     make ci-security    build devops-toolkit:ci-security
 #     make ci-iac         build devops-toolkit:ci-iac
+#     make ci-ansible     build devops-toolkit:ci-ansible
 #     make ci-all         build all three CI images
 #     make ci-smoke-k8s   smoke-test ci-k8s
 #     make ci-smoke-sec   smoke-test ci-security
 #     make ci-smoke-iac   smoke-test ci-iac
+#     make ci-smoke-ansible smoke-test ci-ansible
 #     make ci-smoke-all   smoke-test all CI images
 #
 #   Housekeeping:
@@ -34,6 +36,7 @@ export
 FULL_BUILD_ARGS = \
   --build-arg ANSIBLE_CORE_VERSION=$(ANSIBLE_CORE_VERSION) \
   --build-arg ANSIBLE_LINT_VERSION=$(ANSIBLE_LINT_VERSION) \
+  --build-arg ANSIBLE_NETADDR_VERSION=$(ANSIBLE_NETADDR_VERSION) \
   --build-arg TERRAFORM_VERSION=$(TERRAFORM_VERSION) \
   --build-arg OPENTOFU_VERSION=$(OPENTOFU_VERSION) \
   --build-arg PACKER_VERSION=$(PACKER_VERSION) \
@@ -76,6 +79,11 @@ IAC_BUILD_ARGS = \
   --build-arg YQ_VERSION=$(YQ_VERSION) \
   --build-arg AWSCLI_VERSION=$(AWSCLI_VERSION) \
   --build-arg AZURECLI_VERSION=$(AZURECLI_VERSION)
+
+ANSIBLE_BUILD_ARGS = \
+  --build-arg ANSIBLE_CORE_VERSION=$(ANSIBLE_CORE_VERSION) \
+  --build-arg ANSIBLE_LINT_VERSION=$(ANSIBLE_LINT_VERSION) \
+  --build-arg ANSIBLE_NETADDR_VERSION=$(ANSIBLE_NETADDR_VERSION)
 
 # ---------------------------------------------------------------------------
 # Full image
@@ -129,8 +137,15 @@ ci-iac:
 	  -t $(IMAGE_NAME):ci-iac \
 	  .
 
+.PHONY: ci-ansible
+ci-ansible:
+	docker build $(ANSIBLE_BUILD_ARGS) \
+	  -f ci/Dockerfile.ansible \
+	  -t $(IMAGE_NAME):ci-ansible \
+	  .
+
 .PHONY: ci-all
-ci-all: ci-k8s ci-security ci-iac
+ci-all: ci-k8s ci-security ci-iac ci-ansible
 	@echo "All CI images built."
 
 # ---------------------------------------------------------------------------
@@ -160,8 +175,16 @@ ci-smoke-iac:
 	  -t $(IMAGE_NAME):ci-iac-smoke \
 	  .
 
+.PHONY: ci-smoke-ansible
+ci-smoke-ansible:
+	docker build $(ANSIBLE_BUILD_ARGS) \
+	  -f ci/Dockerfile.ansible \
+	  --target smoke-test \
+	  -t $(IMAGE_NAME):ci-ansible-smoke \
+	  .
+
 .PHONY: ci-smoke-all
-ci-smoke-all: ci-smoke-k8s ci-smoke-sec ci-smoke-iac
+ci-smoke-all: ci-smoke-k8s ci-smoke-sec ci-smoke-iac ci-smoke-ansible
 	@echo "All CI smoke tests passed."
 
 # ---------------------------------------------------------------------------
@@ -201,5 +224,5 @@ versions:
 .PHONY: clean
 clean:
 	-docker rmi $(IMAGE_NAME):full $(IMAGE_NAME):latest 2>/dev/null || true
-	-docker rmi $(IMAGE_NAME):ci-k8s $(IMAGE_NAME):ci-security $(IMAGE_NAME):ci-iac 2>/dev/null || true
-	-docker rmi $(IMAGE_NAME):smoke $(IMAGE_NAME):ci-k8s-smoke $(IMAGE_NAME):ci-security-smoke $(IMAGE_NAME):ci-iac-smoke 2>/dev/null || true
+	-docker rmi $(IMAGE_NAME):ci-k8s $(IMAGE_NAME):ci-security $(IMAGE_NAME):ci-iac $(IMAGE_NAME):ci-ansible 2>/dev/null || true
+	-docker rmi $(IMAGE_NAME):smoke $(IMAGE_NAME):ci-k8s-smoke $(IMAGE_NAME):ci-security-smoke $(IMAGE_NAME):ci-iac-smoke $(IMAGE_NAME):ci-ansible-smoke 2>/dev/null || true

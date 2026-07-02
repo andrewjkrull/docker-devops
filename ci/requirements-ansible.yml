@@ -1,0 +1,11 @@
+---
+# Common collections baked into devops-toolkit:ci-ansible.
+# Universal to Ansible work — project-specific roles/collections belong in each
+# project's own requirements.yml, NOT here.
+collections:
+  - name: community.general
+    version: "10.7.0"
+  - name: ansible.posix
+    version: "1.6.2"
+  - name: ansible.utils
+    version: "5.1.2"
